@@ -1,5 +1,5 @@
 use crate::storage::disk::{DiskManager, PAGE_SIZE};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 // Specifies the number of pages that can be in buffer at a time
 pub const BUFF_POOL_SIZE: usize = 64;
@@ -21,7 +21,7 @@ pub struct BufferManager {
     // Holds instance of DiskManager
     disk_manager: DiskManager,
     // Holds BUFF_POOL_SIZE pages at a time in cache
-    cache: Vec<Frame>,
+    cache: VecDeque<Frame>,
     // NOTE(ansh): probably poor cache locality. mark for review later.
     // Hashes page_id --> index in cache vector for faster reads
     page_table: HashMap<u32, usize>,
@@ -35,9 +35,9 @@ impl Drop for BufferManager {
 
 impl BufferManager {
     pub fn new(disk_manager: DiskManager) -> Self {
-        let mut cache = Vec::with_capacity(BUFF_POOL_SIZE);
+        let mut cache = VecDeque::with_capacity(BUFF_POOL_SIZE);
         for _ in 0..BUFF_POOL_SIZE {
-            cache.push(Frame {
+            cache.push_back(Frame {
                 page_id: None,
                 data: [0u8; PAGE_SIZE],
                 pin_count: 0,
@@ -64,26 +64,14 @@ impl BufferManager {
     //
     // Also most definitely thrashes all over the place in a real setting....
     //
+    // NOTE(ansh): currently a FIFO queue. might need to be upgraded later.
+    // https://www.josehu.com/technical/2020/08/07/cache-eviction-algorithms.html
     pub fn find_replacable_frame(&self) -> usize {
-        if let Some((idx, _)) = self
-            .cache
-            .iter()
-            .enumerate()
-            .find(|(_, c)| c.page_id.is_none())
-        {
-            return idx;
-        };
-
-        if let Some((idx, _)) = self
-            .cache
-            .iter()
-            .enumerate()
-            .find(|(_, c)| c.pin_count == 0)
-        {
-            return idx;
+        if self.cache.is_empty() || self.cache.len() == BUFF_POOL_SIZE {
+            return 0;
         }
 
-        panic!("Out of cache space! No frames available!");
+        return self.cache.len(); // `self.cache.len()-1` is the last element.
     }
 
     // Handles obtaining page information from cache.
